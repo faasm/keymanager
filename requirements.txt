@@ -1,0 +1,8 @@
+wheel
+pycryptodome==3.9.8
+tinyec==0.3.1
+pymongo
+flask
+flask_api
+requests
+cryptography
