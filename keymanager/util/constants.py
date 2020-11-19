@@ -1,0 +1,11 @@
+MAC_SIZE = 16
+PUBLIC_KEY_X_SIZE = 32
+PUBLIC_KEY_Y_SIZE = 32
+NONCE_SIZE = 12
+PUBLIC_KEY_SIZE = 64
+AES_KEY_SIZE = 16
+HASH_SIZE = 32
+SID_SIZE= 12
+MASTER_SECRET_SIZE = AES_KEY_SIZE
+IAS_QUOTE_URL = 'https://test-as.sgx.trustedservices.intel.com/attestation/sgx/v3/report'
+
