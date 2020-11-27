@@ -314,6 +314,14 @@ def prerequest(namespace, function):
 def index():
     return 'KeyManager for faasm', status.HTTP_200_OK
 def main(sim):
+    #test mongodb connection
+    try:
+        db_client.server_info()
+    except pymongo.errors.ServerSelectionTimeoutError as e:
+        print("error: could not connect to MongoDB")
+        print(e)
+        return
+
     ip = os.environ.get('KM_HOST')
     if ip is None:
         ip = DEFAULT_KM_HOST
