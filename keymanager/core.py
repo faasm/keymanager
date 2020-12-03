@@ -45,11 +45,13 @@ class ClientThread(Thread):
         self._sim = sim
         print("Got new Connection.")
     def run(self):
+        print("running client thread")
         curve = registry.get_curve('secp256r1')
         data = self._socket.recv(4)
         if int.from_bytes(bytes(data), byteorder='little', signed=False) != 0:
             print("ERROR") #TODO
         data = self._socket.recv(ctypes.sizeof(sgx_ra_msg1_t))
+        print("data: %s" % data)
         msg1 = sgx_ra_msg1_t.from_buffer_copy(data)
         remote_public_x_buffer = bytes(msg1.g_a)[:PUBLIC_KEY_X_SIZE]
         remote_public_y_buffer = bytes(msg1.g_a)[PUBLIC_KEY_X_SIZE:]
@@ -271,9 +273,11 @@ def register(namespace):
     filter = {'namespace': namespace, 'name': payload["function"]}
     update = {'$set': {'hash' : payload['hash'], 'hash_' : payload['hash_'],'key': payload['key'], 'allowed-functions': payload['allowed-functions'], 'ccp': payload['ccp'], 'verify': payload['verify'], 'chain-verify': payload['chain-verify']}}
     db_client['faasm']['function'].update_one(filter, update, upsert=True)
+    print("registered function {} for user {}".format(payload["function"], namespace))
     return 'Registration was successful.', status.HTTP_200_OK
 @app.route('/api/v1/registry/pre-request/<namespace>/<function>', methods=['POST'])
 def prerequest(namespace, function):
+    print("got pre-request for function {} for user {}".format(function, namespace))
     payload = request.json
     if not payload:
         abort(status.HTTP_400_BAD_REQUEST)
@@ -308,6 +312,7 @@ def prerequest(namespace, function):
     response['hash-list'] = hash_list
     response['verify'] = full_ccp
     response['chain-verify'] = full_chain
+    print("adding to db: sid: {}, hash: {}, key: {}".format(sid, hash, payload['key']));
     db_client['faasm']['session'].insert_one({"sid": sid, "hash": hash, "key": payload['key']})
     return response
 @app.route('/')
