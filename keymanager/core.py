@@ -154,6 +154,7 @@ class ClientThread(Thread):
             msg = sgx_wamr_msg_t.from_buffer_copy(data)
             nonce = b64encode(bytes(msg.nonce))
             if db_client["faasm"]["nonces"].find_one({"value": nonce}):
+                print("that's not a new nonce!")
                 res_payload = build_error_buffer('Replay protection.\0')
                 cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                 res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
@@ -161,12 +162,17 @@ class ClientThread(Thread):
                 encrypted_payload_data = self._socket.recv(msg.payload_len)
                 payload_data = decrypt_aes_gcm_128(encrypted_payload_data, bytes(msg.nonce), bytes(msg.mac), shared_secret)
                 db_client["faasm"]["nonces"].insert_one({"value": nonce})
-                if payload_data[0] < 2: #call
+                msg_type = payload_data[1]
+                if msg_type == MSG_TYPE_CALL:
+                    print("call")
                     payload = sgx_wamr_msg_hash_sid_t.from_buffer_copy(payload_data)
                     session_id = bytes(payload.session_id).decode()
                     function_hash_digest = hexlify(bytes(payload.opcode_enc_hash)).decode('ascii')
                     nonce = b64encode(bytes(payload.nonce))
-                    if db_client["faasm"]["nonces"].find_one({"value": nonce}):
+                    result = db_client["faasm"]["nonces"].find_one({"value": nonce})
+                    if result:
+                        print(result)
+                        print("ERROR: replay protection")
                         res_payload = build_error_buffer(bytes(msg.nonce), 'Replay protection.\0')
                         cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                         res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
@@ -179,12 +185,15 @@ class ClientThread(Thread):
                             cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                             res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
                         else:
+                            print("ERROR: function and sid do not match")
                             res_payload = build_error_buffer(bytes(msg.nonce), 'Function and sid doesnt match.\0')
                             cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                             res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
-                elif payload_data[0] < 3: #load
+                elif msg_type == MSG_TYPE_BIND:
+                    print("load")
                     payload = sgx_wamr_msg_hash_fct_t_factory(msg.payload_len).from_buffer_copy(payload_data)
-                    function_name= bytes(payload.fct_name).decode()
+                    function_name=bytes(payload.fct_name).decode()
+                    function_name=function_name[:len(function_name)-1] #truncate last byte
                     function_hash_digest = hexlify(bytes(payload.opcode_enc_hash)).decode('ascii')
                     result = db_client["faasm"]["function"].find_one({"name": function_name, "hash": function_hash_digest})
                     if result:
@@ -194,10 +203,12 @@ class ClientThread(Thread):
                         cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                         res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
                     else:
+                        print("error: hash and function do not match")
                         res_payload = build_error_buffer(bytes(msg.nonce), 'Hash and function doesnt match.\0')
                         cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                         res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
-                elif payload_data[0] < 6: #state write
+                elif msg_type == MSG_TYPE_STATE_WRITE:
+                    print("state write")
                     payload = sgx_wamr_msg_state_write_t_factory(msg.payload_len).from_buffer_copy(payload_data)
                     buffer_nonce_digest = hexlify(bytes(payload.buffer_nonce)).decode('ascii')
                     namespace, key = bytes(payload.data[:payload.name_length]).decode().split(':')
@@ -209,7 +220,8 @@ class ClientThread(Thread):
                     res_payload = sgx_wamr_payload_key_factory(bytes(msg.nonce), 0, 2, state_secret)
                     cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                     res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
-                elif payload_data[0] < 8: #state read
+                elif msg_type == MSG_TYPE_STATE_READ:
+                    print("state read")
                     payload = sgx_wamr_msg_state_read_t_factory(msg.payload_len).from_buffer_copy(payload_data)
                     namespace, key = bytes(payload.key).decode().split(':')
                     result = db_client["faasm"]["state"].find_one({"namespace": namespace, "key": key})
@@ -224,7 +236,8 @@ class ClientThread(Thread):
                         res_payload = build_error_buffer(bytes(msg.nonce), 'State is not registered.\0')
                         cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                         res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
-                elif payload_data[0] < 10: #request check
+                elif msg_type == MSG_TYPE_NONCE:
+                    print("request check")
                     payload = sgx_wamr_msg_nonce_offer_t.from_buffer_copy(payload_data)
                     nonce = b64encode(bytes(payload.nonce))
                     if db_client["faasm"]["nonces"].find_one({"value": nonce}):
@@ -236,7 +249,8 @@ class ClientThread(Thread):
                         res_payload = sgx_wamr_ack_t_factory(bytes(msg.nonce), 0, 0)
                         cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                         res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
-                elif payload_data[0] < 12: #state write reply
+                elif msg_type == MSG_TYPE_STATE_WRITE_ACK: #state write reply
+                    print("state write reply")
                     payload = sgx_wamr_msg_state_read_t_factory(msg.payload_len).from_buffer_copy(payload_data)
                     namespace, key = bytes(payload.key).decode().split(':')
                     if namespace + ':' + key not in state_pendings:
@@ -273,7 +287,7 @@ def register(namespace):
     filter = {'namespace': namespace, 'name': payload["function"]}
     update = {'$set': {'hash' : payload['hash'], 'hash_' : payload['hash_'],'key': payload['key'], 'allowed-functions': payload['allowed-functions'], 'ccp': payload['ccp'], 'verify': payload['verify'], 'chain-verify': payload['chain-verify']}}
     db_client['faasm']['function'].update_one(filter, update, upsert=True)
-    print("registered function {} for user {}".format(payload["function"], namespace))
+    print("registered function '{}' for user '{}' with hash '{}' and policy '{}'".format(payload["function"], namespace, payload["hash"], policy))
     return 'Registration was successful.', status.HTTP_200_OK
 @app.route('/api/v1/registry/pre-request/<namespace>/<function>', methods=['POST'])
 def prerequest(namespace, function):
