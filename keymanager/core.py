@@ -163,10 +163,11 @@ class ClientThread(Thread):
                 payload_data = decrypt_aes_gcm_128(encrypted_payload_data, bytes(msg.nonce), bytes(msg.mac), shared_secret)
                 db_client["faasm"]["nonces"].insert_one({"value": nonce})
                 msg_type = payload_data[1]
+                print("got msg with msg_type {}".format(msg_type))
                 if msg_type == MSG_TYPE_CALL:
-                    print("call")
                     payload = sgx_wamr_msg_hash_sid_t.from_buffer_copy(payload_data)
                     session_id = bytes(payload.session_id).decode()
+                    print("calling sid ", session_id)
                     function_hash_digest = hexlify(bytes(payload.opcode_enc_hash)).decode('ascii')
                     nonce = b64encode(bytes(payload.nonce))
                     result = db_client["faasm"]["nonces"].find_one({"value": nonce})
@@ -190,9 +191,9 @@ class ClientThread(Thread):
                             cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                             res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
                 elif msg_type == MSG_TYPE_BIND:
-                    print("load")
                     payload = sgx_wamr_msg_hash_fct_t_factory(msg.payload_len).from_buffer_copy(payload_data)
                     function_name=bytes(payload.fct_name).decode()
+                    print("loading", function_name)
                     function_name=function_name[:len(function_name)-1] #truncate last byte
                     function_hash_digest = hexlify(bytes(payload.opcode_enc_hash)).decode('ascii')
                     result = db_client["faasm"]["function"].find_one({"name": function_name, "hash": function_hash_digest})
@@ -241,6 +242,7 @@ class ClientThread(Thread):
                     payload = sgx_wamr_msg_nonce_offer_t.from_buffer_copy(payload_data)
                     nonce = b64encode(bytes(payload.nonce))
                     if db_client["faasm"]["nonces"].find_one({"value": nonce}):
+                        print("error: nonce found")
                         res_payload = build_error_buffer(bytes(msg.nonce), 'Replay protection.\0')
                         cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                         res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
@@ -249,6 +251,7 @@ class ClientThread(Thread):
                         res_payload = sgx_wamr_ack_t_factory(bytes(msg.nonce), 0, 0)
                         cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                         res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
+                        print("check ok. response of {} bytes sent".format(len(res)));
                 elif msg_type == MSG_TYPE_STATE_WRITE_ACK: #state write reply
                     print("state write reply")
                     payload = sgx_wamr_msg_state_read_t_factory(msg.payload_len).from_buffer_copy(payload_data)
