@@ -9,5 +9,5 @@ The ```Key-Manager``` is made up of two units:
 FOR HW-Mode, key(key.key) and cert(cert.crt) for IAS are needed.
 
 ## Requirements
-- python packages in `requirements.txt`
-- ```MongoDB``` as backend
+- Install dependencies: `pip3 install -r requirements.txt`
+- up and running MongoDB as backend
