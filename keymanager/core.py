@@ -297,12 +297,15 @@ def prerequest(namespace, function):
     print("got pre-request for function {} for user {}".format(function, namespace))
     payload = request.json
     if not payload:
-        abort(status.HTTP_400_BAD_REQUEST)
+        print('ERROR: no payload recieved')
+        return 'No payload recieved', status.HTTP_400_BAD_REQUEST
     policy = ['key']
     if not is_valid_payload(payload, policy):
+        print('ERROR: Payload is invalid')
         return 'Payload is invalid', status.HTTP_400_BAD_REQUEST
     result = db_client['faasm']['function'].find_one({'namespace': namespace, 'name': function})
     if not result:
+        print('ERROR: Called function in unknown in called namespace.')
         return 'Called function in unknown in called namespace.', status.HTTP_400_BAD_REQUEST
     hash = result["hash"]
     full_ccp = {function: result['verify']}
@@ -317,6 +320,7 @@ def prerequest(namespace, function):
                 continue
             result = db_client['faasm']['function'].find_one({'namespace': namespace, 'name': current})
             if not result:
+                print('ERROR: Policy is not complete')
                 return 'Policy is not complete', status.HTTP_400_BAD_REQUEST
             else:
                 full_ccp[current] = result['verify']
