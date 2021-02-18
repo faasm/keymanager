@@ -30,7 +30,14 @@ from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
 MASTER_SECRET = get_random_bytes(MASTER_SECRET_SIZE)
 spid = bytes.fromhex("d77b162b3dc029f174a627cb73ececde")
-db_client = pymongo.MongoClient(DEFAULT_MONGO_HOST, DEFAULT_MONGO_PORT, serverSelectionTimeoutMS=DEFAULT_MONGO_TIMEOUT)
+
+mongo_host = os.environ.get("DEFAULT_MONGO_HOST")
+if mongo_host == None:
+    mongo_host = DEFAULT_MONGO_HOST #from util/env.py
+mongo_port = os.environ.get("DEFAULT_MONGO_PORT")
+if mongo_port == None:
+    mongo_port = DEFAULT_MONGO_PORT #from util/env.py
+db_client = pymongo.MongoClient(mongo_host, mongo_port, serverSelectionTimeoutMS=DEFAULT_MONGO_TIMEOUT)
 app = Flask(__name__)
 state_pendings = {} #TODO cleanup thread
 
