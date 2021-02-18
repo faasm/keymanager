@@ -320,8 +320,8 @@ def prerequest(namespace, function):
                 continue
             result = db_client['faasm']['function'].find_one({'namespace': namespace, 'name': current})
             if not result:
-                print('ERROR: Policy is not complete')
-                return 'Policy is not complete', status.HTTP_400_BAD_REQUEST
+                print('ERROR: allowed function "{}" not registered'.format(current))
+                return 'allowed function "{}" not registered'.format(current), status.HTTP_400_BAD_REQUEST
             else:
                 full_ccp[current] = result['verify']
                 full_chain[current] = result['chain-verify']
