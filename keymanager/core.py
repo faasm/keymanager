@@ -174,8 +174,8 @@ class ClientThread(Thread):
                 if msg_type == MSG_TYPE_CALL:
                     payload = sgx_wamr_msg_hash_sid_t.from_buffer_copy(payload_data)
                     session_id = bytes(payload.session_id).decode()
-                    print("calling sid ", session_id)
                     function_hash_digest = hexlify(bytes(payload.opcode_enc_hash)).decode('ascii')
+                    print("calling function with hash '{}' and sid '{}'".format(function_hash_digest, session_id))
                     nonce = b64encode(bytes(payload.nonce))
                     result = db_client["faasm"]["nonces"].find_one({"value": nonce})
                     if result:
@@ -193,7 +193,7 @@ class ClientThread(Thread):
                             cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                             res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
                         else:
-                            print("ERROR: function and sid do not match")
+                            print("ERROR: function hash '{}' and sid '{}' do not match".format(function_hash_digest, session_id))
                             res_payload = build_error_buffer(bytes(msg.nonce), 'Function and sid doesnt match.\0')
                             cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                             res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
@@ -211,7 +211,7 @@ class ClientThread(Thread):
                         cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                         res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
                     else:
-                        print("error: hash and function do not match")
+                        print("ERROR: function hash '{}' and function name '{}' do not match".format(function_hash_digest, function_name))
                         res_payload = build_error_buffer(bytes(msg.nonce), 'Hash and function doesnt match.\0')
                         cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                         res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
