@@ -1,7 +1,6 @@
 from flask import Flask, request
 from flask_api import status
 import os
-import pymongo
 import socket
 import tinyec
 from tinyec import registry, ec as ec2
@@ -28,18 +27,19 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature
 
+from collections import defaultdict
+
 MASTER_SECRET = get_random_bytes(MASTER_SECRET_SIZE)
 spid = bytes.fromhex("d77b162b3dc029f174a627cb73ececde")
 
-mongo_host = os.environ.get("DEFAULT_MONGO_HOST")
-if mongo_host == None:
-    mongo_host = DEFAULT_MONGO_HOST #from util/env.py
-mongo_port = os.environ.get("DEFAULT_MONGO_PORT")
-if mongo_port == None:
-    mongo_port = DEFAULT_MONGO_PORT #from util/env.py
-db_client = pymongo.MongoClient(mongo_host, mongo_port, serverSelectionTimeoutMS=DEFAULT_MONGO_TIMEOUT)
+#lists/dicts for storing nonces, sessions, functions, states in memory
+storage_nonces = []
+storage_sessions = {}
+storage_functions = defaultdict(dict)
+storage_states = defaultdict(dict)
+storage_state_pendings = defaultdict(dict)
+
 app = Flask(__name__)
-state_pendings = {} #TODO cleanup thread
 
 class ClientThread(Thread):
     def __init__(self, ip, port, socket, sim, cert, key):
@@ -143,7 +143,7 @@ class ClientThread(Thread):
             mrenclave_hash = m.hexdigest()
             result = db_client["faasm"]["config"].find_one({'mrenclave': mrenclave_hash})
             if not result:
-                return True #TODO WARNING only for test
+                return False
             return True
         if not self._sim:
             if not is_valid_mrenclave(attestation_result['isvEnclaveQuoteBody']):
@@ -160,7 +160,7 @@ class ClientThread(Thread):
                 break
             msg = sgx_wamr_msg_t.from_buffer_copy(data)
             nonce = b64encode(bytes(msg.nonce))
-            if db_client["faasm"]["nonces"].find_one({"value": nonce}):
+            if nonce in storage_nonces:
                 print("that's not a new nonce!")
                 res_payload = build_error_buffer('Replay protection.\0')
                 cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
@@ -168,7 +168,7 @@ class ClientThread(Thread):
             else: 
                 encrypted_payload_data = self._socket.recv(msg.payload_len)
                 payload_data = decrypt_aes_gcm_128(encrypted_payload_data, bytes(msg.nonce), bytes(msg.mac), shared_secret)
-                db_client["faasm"]["nonces"].insert_one({"value": nonce})
+                storage_nonces.insert(nonce)
                 msg_type = payload_data[1]
                 print("got msg with msg_type {}".format(msg_type))
                 if msg_type == MSG_TYPE_CALL:
@@ -177,17 +177,16 @@ class ClientThread(Thread):
                     function_hash_digest = hexlify(bytes(payload.opcode_enc_hash)).decode('ascii')
                     print("calling function with hash '{}' and sid '{}'".format(function_hash_digest, session_id))
                     nonce = b64encode(bytes(payload.nonce))
-                    result = db_client["faasm"]["nonces"].find_one({"value": nonce})
-                    if result:
+                    if nonce in storage_nonces:
                         print(result)
                         print("ERROR: replay protection")
                         res_payload = build_error_buffer(bytes(msg.nonce), 'Replay protection.\0')
                         cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                         res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
                     else:
-                        db_client["faasm"]["nonces"].insert_one({"value": nonce})
-                        result = db_client["faasm"]["session"].find_one({"sid": session_id, "hash": function_hash_digest})
-                        if result:
+                        storage_nonces.insert(nonce)
+                        storage
+                        if storage_sessions[session_id]["hash"] == function_hash_digest:
                             payload_key = result['key'].encode()
                             res_payload = sgx_wamr_payload_key_factory(bytes(msg.nonce), 0, 0, payload_key)
                             cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
@@ -203,10 +202,9 @@ class ClientThread(Thread):
                     print("loading", function_name)
                     function_name=function_name[:len(function_name)-1] #truncate last byte
                     function_hash_digest = hexlify(bytes(payload.opcode_enc_hash)).decode('ascii')
-                    result = db_client["faasm"]["function"].find_one({"name": function_name, "hash": function_hash_digest})
-                    if result:
-                        op_key = result['key'].encode()
-                        policy = result['ccp'].encode()
+                    if storage_functions[function_name]['hash'] == function_hash_digest:
+                        op_key = storage_functions[function_name]['key'].encode()
+                        policy = storage_functions[function_name]['ccp'].encode()
                         res_payload = sgx_wamr_okey_policy_t_factory(bytes(msg.nonce), 0, 0, op_key, policy)
                         cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                         res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
@@ -222,9 +220,7 @@ class ClientThread(Thread):
                     namespace, key = bytes(payload.data[:payload.name_length]).decode().split(':')
                     total_execution_stack = bytes(payload.data[payload.name_length:]).decode()
                     state_secret = get_random_bytes(AES_KEY_SIZE)
-                    filter = {'namespace': namespace, 'key': key}
-                    update = {'$set': {'secret' : hexlify(state_secret).decode('ascii'), 'buffer_nonce': buffer_nonce_digest, 'stack': total_execution_stack}}
-                    state_pendings[namespace + ':' + key] = {'filter': filter, 'update': update}
+                    storage_state_pendings[namespace][key] = {'secret' : hexlify(state_secret).decode('ascii'), 'buffer_nonce': buffer_nonce_digest, 'stack': total_execution_stack}
                     res_payload = sgx_wamr_payload_key_factory(bytes(msg.nonce), 0, 2, state_secret)
                     cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                     res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
@@ -232,11 +228,10 @@ class ClientThread(Thread):
                     print("state read")
                     payload = sgx_wamr_msg_state_read_t_factory(msg.payload_len).from_buffer_copy(payload_data)
                     namespace, key = bytes(payload.key).decode().split(':')
-                    result = db_client["faasm"]["state"].find_one({"namespace": namespace, "key": key})
-                    if result:
-                        buffer_nonce = unhexlify(result['buffer_nonce'])
-                        state_secret = unhexlify(result["secret"])
-                        stack = result['stack'].encode()
+                    if key in storage_states[namespace]:
+                        buffer_nonce = unhexlify(storage_states[namespace][key]['buffer_nonce'])
+                        state_secret = unhexlify(storage_states[namespace][key]["secret"])
+                        stack = storage_states[namespace][key]['stack'].encode()
                         res_payload = sgx_wamr_state_read_res_factory(bytes(msg.nonce), 0, 2, state_secret, buffer_nonce, stack)
                         cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                         res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
@@ -248,13 +243,13 @@ class ClientThread(Thread):
                     print("request check")
                     payload = sgx_wamr_msg_nonce_offer_t.from_buffer_copy(payload_data)
                     nonce = b64encode(bytes(payload.nonce))
-                    if db_client["faasm"]["nonces"].find_one({"value": nonce}):
+                    if nonce in storage_nonces:
                         print("error: nonce found")
                         res_payload = build_error_buffer(bytes(msg.nonce), 'Replay protection.\0')
                         cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                         res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
                     else:
-                        db_client["faasm"]["nonces"].insert_one({"value": nonce})
+                        storage_nonces.insert(nonce)
                         res_payload = sgx_wamr_ack_t_factory(bytes(msg.nonce), 0, 0)
                         cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                         res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
@@ -263,15 +258,14 @@ class ClientThread(Thread):
                     print("state write reply")
                     payload = sgx_wamr_msg_state_read_t_factory(msg.payload_len).from_buffer_copy(payload_data)
                     namespace, key = bytes(payload.key).decode().split(':')
-                    if namespace + ':' + key not in state_pendings:
+                    if key not in storage_state_pendings[namespace]:
                         res_payload = build_error_buffer(bytes(msg.nonce), 'State is not registered.\0')
                         cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                         res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
                     else: 
-                        tmp = state_pendings[namespace + ':' + key]
-                        result = db_client["faasm"]["state"].update_one(tmp['filter'], tmp['update'], upsert=True)
-                        if result:
-                            del state_pendings[namespace + ':' + key]
+                        if key in storage_states[namespace]:
+                            storage_states[namespace][key] = storage_state_pendings[namespace][key]
+                            del storage_state_pendings[namespace][key]
                             res_payload = sgx_wamr_ack_t_factory(bytes(msg.nonce), 0, 0)
                             cipher, nonce, mac = encrypt_aes_gcm_128(res_payload, shared_secret)
                             res = sgx_wamr_msg_t_factory(msg.msg_id, mac, nonce, len(cipher), cipher)
@@ -294,9 +288,8 @@ def register(namespace):
     policy = ['function', 'hash', 'hash_', 'key', 'allowed-functions','ccp','verify', 'chain-verify']
     if not is_valid_payload(payload, policy):
         return 'Payload is invalid', status.HTTP_400_BAD_REQUEST
-    filter = {'namespace': namespace, 'name': payload["function"]}
-    update = {'$set': {'hash' : payload['hash'], 'hash_' : payload['hash_'],'key': payload['key'], 'allowed-functions': payload['allowed-functions'], 'ccp': payload['ccp'], 'verify': payload['verify'], 'chain-verify': payload['chain-verify']}}
-    db_client['faasm']['function'].update_one(filter, update, upsert=True)
+    function_name = payload['function']
+    storage_functions[namespace][function_name] = {'hash' : payload['hash'], 'hash_' : payload['hash_'],'key': payload['key'], 'allowed-functions': payload['allowed-functions'], 'ccp': payload['ccp'], 'verify': payload['verify'], 'chain-verify': payload['chain-verify']}
     print("registered function '{}' for user '{}' with hash '{}' and policy '{}'".format(payload["function"], namespace, payload["hash"], policy))
     return 'Registration was successful.', status.HTTP_200_OK
 @app.route('/api/v1/registry/pre-request/<namespace>/<function>', methods=['POST'])
@@ -310,8 +303,7 @@ def prerequest(namespace, function):
     if not is_valid_payload(payload, policy):
         print('ERROR: Payload is invalid')
         return 'Payload is invalid', status.HTTP_400_BAD_REQUEST
-    result = db_client['faasm']['function'].find_one({'namespace': namespace, 'name': function})
-    if not result:
+    if function not in storage_functions[namespace]:
         print('ERROR: Called function in unknown in called namespace.')
         return 'Called function in unknown in called namespace.', status.HTTP_400_BAD_REQUEST
     hash = result["hash"]
@@ -325,8 +317,7 @@ def prerequest(namespace, function):
             current = list(current.keys())[0]
             if current in full_ccp.keys():
                 continue
-            result = db_client['faasm']['function'].find_one({'namespace': namespace, 'name': current})
-            if not result:
+            if current not in storage_functions[namespace]:
                 print('ERROR: allowed function "{}" not registered'.format(current))
                 return 'allowed function "{}" not registered'.format(current), status.HTTP_400_BAD_REQUEST
             else:
@@ -341,20 +332,12 @@ def prerequest(namespace, function):
     response['verify'] = full_ccp
     response['chain-verify'] = full_chain
     print("adding to db: sid: {}, hash: {}, key: {}".format(sid, hash, payload['key']));
-    db_client['faasm']['session'].insert_one({"sid": sid, "hash": hash, "key": payload['key']})
+    storage_sessions[sid] = {"hash": hash, "key": payload['key']}
     return response
 @app.route('/')
 def index():
     return 'KeyManager for faasm', status.HTTP_200_OK
 def main(sim):
-    #test mongodb connection
-    try:
-        db_client.server_info()
-    except pymongo.errors.ServerSelectionTimeoutError as e:
-        print("error: could not connect to MongoDB")
-        print(e)
-        return
-
     ip = os.environ.get('KM_HOST')
     if ip is None:
         ip = DEFAULT_KM_HOST
@@ -399,4 +382,3 @@ def main(sim):
         threads.append(new_thread)
     for t in threads:
         t.join()
-    db_client.close()
