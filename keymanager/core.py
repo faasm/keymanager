@@ -143,6 +143,7 @@ class ClientThread(Thread):
             mrenclave_hash = m.hexdigest()
             result = db_client["faasm"]["config"].find_one({'mrenclave': mrenclave_hash})
             if not result:
+                print("WARNING: accepting undefined MRENCLAVE value {}".format(mrenclave_hash))
                 return True #TODO WARNING only for test
             return True
         if not self._sim:
