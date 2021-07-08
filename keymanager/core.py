@@ -294,6 +294,7 @@ def register(namespace):
         return 'No payload recieved', status.HTTP_400_BAD_REQUEST
     policy = ['function', 'hash', 'hash_', 'key', 'allowed-functions','ccp','verify', 'chain-verify']
     if not is_valid_payload(payload, policy):
+        print('ERROR: payload is invalid')
         return 'Payload is invalid', status.HTTP_400_BAD_REQUEST
     filter = {'namespace': namespace, 'name': payload["function"]}
     update = {'$set': {'hash' : payload['hash'], 'hash_' : payload['hash_'],'key': payload['key'], 'allowed-functions': payload['allowed-functions'], 'ccp': payload['ccp'], 'verify': payload['verify'], 'chain-verify': payload['chain-verify']}}
@@ -313,7 +314,7 @@ def prerequest(namespace, function):
         return 'Payload is invalid', status.HTTP_400_BAD_REQUEST
     result = db_client['faasm']['function'].find_one({'namespace': namespace, 'name': function})
     if not result:
-        print('ERROR: Called function in unknown in called namespace.')
+        print('ERROR: Called function is unknown in called namespace.')
         return 'Called function in unknown in called namespace.', status.HTTP_400_BAD_REQUEST
     hash = result["hash"]
     full_ccp = {function: result['verify']}
