@@ -290,7 +290,8 @@ class ClientThread(Thread):
 def register(namespace):
     payload = request.json
     if not payload:
-        abort(status.HTTP_400_BAD_REQUEST)
+        print('ERROR: no payload recieved')
+        return 'No payload recieved', status.HTTP_400_BAD_REQUEST
     policy = ['function', 'hash', 'hash_', 'key', 'allowed-functions','ccp','verify', 'chain-verify']
     if not is_valid_payload(payload, policy):
         return 'Payload is invalid', status.HTTP_400_BAD_REQUEST
