@@ -2,8 +2,7 @@ import requests
 import json
 
 host = "localhost"
-guard_port = "8009"
-registry_port = "5000"
+registry_port = 5000
 user = "demo"
 func = "hello"
 
