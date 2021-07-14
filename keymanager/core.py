@@ -58,7 +58,6 @@ class ClientThread(Thread):
         if int.from_bytes(bytes(data), byteorder='little', signed=False) != 0:
             print("ERROR") #TODO
         data = self._socket.recv(ctypes.sizeof(sgx_ra_msg1_t))
-        print("data: %s" % data)
         msg1 = sgx_ra_msg1_t.from_buffer_copy(data)
         remote_public_x_buffer = bytes(msg1.g_a)[:PUBLIC_KEY_X_SIZE]
         remote_public_y_buffer = bytes(msg1.g_a)[PUBLIC_KEY_X_SIZE:]
@@ -100,7 +99,8 @@ class ClientThread(Thread):
         quote_size = int(len(data) - 336) #size of msg3
         msg3 = sgx_ra_msg3_t_factory(quote_size).from_buffer_copy(data)
         if bytes(msg1.g_a) != bytes(msg3.g_a):
-            pass #TODO error
+            print("ERROR: pubkeys in msg1 and msg3 do not match!")
+            sys.exit(1)
         """mac = CMAC.new(smk.digest(), ciphermod=AES)
         mac.update(bytes(msg3.g_a))
         print(mac.digest()) #TODO
