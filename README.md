@@ -13,8 +13,17 @@ FOR HW-Mode, key(key.key) and cert(cert.crt) for IAS are needed.
 - up and running MongoDB as backend
 
 ## Tests
+Requirements: gtest, libcurl
+
+Build tests:
+```
+cmake tests
+make -C tests
+```
+
 Run tests by executing
 
 ```
-pytest tests/test.py
+./tests/run
+
 ```

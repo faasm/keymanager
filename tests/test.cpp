@@ -2,29 +2,94 @@
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <iostream>
+#include <fstream>
+#include <sstream>
 
+//http includes
+#include <curl/curl.h>
+
+//sgx includes
 #include <sgx_error.h>
 #include <sgx_uae_epid.h>
 #include <sgx_ukey_exchange.h>
 #include "enclave_u.h"
 
 std::string host = "127.0.0.1";
+std::string registry_port = "5000";
+std::string user = "demo";
+std::string func = "hello";
 static int guard_port = 8009;
 static int _keymgr_socket;
 static struct sockaddr_in addr;
+
+CURL *curl;
+CURLcode res;
+long httpCode = 0;
 
 sgx_enclave_id_t globalEnclaveId;
 sgx_status_t status;
 sgx_ra_context_t context = 0;
 
-TEST(KMTest, testSetup) {
+using namespace std;
+
+string readFileIntoString(const string& path) {
+    ifstream input_file(path);
+    if (!input_file.is_open()) {
+        cerr << "Could not open the file - '"
+             << path << "'" << endl;
+        exit(EXIT_FAILURE);
+    }
+    return string((std::istreambuf_iterator<char>(input_file)), std::istreambuf_iterator<char>());
+}
+
+TEST(KMTest, testHttpSetup) {
+	curl_global_init(CURL_GLOBAL_ALL);
+	curl = curl_easy_init();
+	//curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L); //uncomment to enable verbose curl
+
+	//set global curl headers
+	struct curl_slist *headers = NULL;
+	headers = curl_slist_append(headers, "Content-Type: application/json");
+	curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
+	ASSERT_NE(curl, nullptr);
+}
+
+TEST(KMTest, testHttp) {
+	curl_easy_setopt(curl, CURLOPT_URL, string("http://" + host + ":" + registry_port + "/").c_str());
+	curl_easy_setopt(curl, CURLOPT_HTTPGET, 1L);
+	curl_easy_perform(curl);
+	curl_easy_getinfo (curl, CURLINFO_RESPONSE_CODE, &httpCode);
+	ASSERT_EQ(httpCode, 200);
+}
+
+TEST(KMTest, testHttpRegister) {
+	string json = readFileIntoString("tests/policy.json");
+	curl_easy_setopt(curl, CURLOPT_URL, std::string("http://" + host + ":" + registry_port + "/api/v1/registry/register/" + user).c_str());
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, json.c_str());
+	curl_easy_perform(curl);
+	curl_easy_getinfo (curl, CURLINFO_RESPONSE_CODE, &httpCode);
+	ASSERT_EQ(httpCode, 200);
+}
+
+TEST(KMTest, testHttpPrerequest) {
+	string registerMsg = "{\"key\": \"whatever\"}";
+	curl_easy_setopt(curl, CURLOPT_URL, std::string("http://" + host + ":" + registry_port + "/api/v1/registry/pre-request/" + user + "/" + func).c_str());
+	curl_easy_setopt(curl, CURLOPT_POSTFIELDS, registerMsg.c_str());
+	curl_easy_perform(curl);
+	curl_easy_getinfo (curl, CURLINFO_RESPONSE_CODE, &httpCode);
+	ASSERT_EQ(httpCode, 200);
+}
+
+
+TEST(KMTest, testSGXSetup) {
 	// connect to KM
 	_keymgr_socket = socket(AF_INET, SOCK_STREAM, 0);
 	ASSERT_GT(_keymgr_socket, 0);
 
 	// create enclave
 	sgx_launch_token_t sgxEnclaveToken = { 0 };
-	ASSERT_EQ(sgx_create_enclave("enclave.sign.so",
+	ASSERT_EQ(sgx_create_enclave("tests/enclave.sign.so",
 				1,
 				&sgxEnclaveToken,
 				nullptr,

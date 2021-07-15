@@ -10,6 +10,10 @@ list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_LIST_DIR}/cmake)
 find_package(SGX REQUIRED)
 include_directories(${SGX_SDK_PATH}/include)
 
+# Locate CURL
+find_package(CURL REQUIRED)
+include_directories(${CURL_INCLUDE_DIR})
+
 # SGX configuration
 set(SGX_DEBUG_MODE 1)
 set(SGX_SDK_LIB_PATH ${SGX_SDK_PATH}/lib64)
@@ -89,8 +93,8 @@ add_custom_command(TARGET enclave POST_BUILD
 
 
 # Test executable
-add_executable(runTest test.cpp enclave/enclave_u.c)
-add_dependencies(runTest enclave)
-target_include_directories(runTest PUBLIC enclave/)
-target_link_directories(runTest PRIVATE ${SGX_SDK_LIB_PATH})
-target_link_libraries(runTest ${GTEST_LIBRARIES} pthread sgx_urts_sim sgx_uae_service_sim sgx_ukey_exchange )
+add_executable(run test.cpp enclave/enclave_u.c)
+add_dependencies(run enclave)
+target_include_directories(run PUBLIC enclave/)
+target_link_directories(run PRIVATE ${SGX_SDK_LIB_PATH})
+target_link_libraries(run ${GTEST_LIBRARIES} ${CURL_LIBRARIES} pthread sgx_urts_sim sgx_uae_service_sim sgx_ukey_exchange)
