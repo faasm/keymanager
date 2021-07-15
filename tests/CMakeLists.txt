@@ -16,37 +16,31 @@ include_directories(${CURL_INCLUDE_DIR})
 
 # SGX configuration
 set(SGX_DEBUG_MODE 1)
-set(SGX_SDK_LIB_PATH ${SGX_SDK_PATH}/lib64)
-set(SGX_SDK_ENCLAVE_SIGNER ${SGX_SDK_PATH}/bin/x64/sgx_sign)
-set(SGX_SDK_ENCLAVE_EDGER8R ${SGX_SDK_PATH}/bin/x64/sgx_edger8r)
 
-set(enclave_C_FLAGS ${SGX_C_GLOBAL_FLAGS}
+set(ENCLAVE_SRC
+		enclave/enclave.cpp
+		enclave/enclave_t.c
+	)
+
+add_library(enclave SHARED ${ENCLAVE_SRC})
+set_target_properties(enclave PROPERTIES PREFIX "")
+target_include_directories(enclave PRIVATE
+							${SGX_INCLUDE_DIR}
+							${SGX_TLIBC_INCLUDE_DIR}
+							${SGX_TLIBCXX_INCLUDE_DIR}
+							)
+target_link_directories(enclave PRIVATE ${SGX_SDK_PATH}/lib64)
+target_compile_options(enclave PRIVATE
         -nostdinc
         -fvisibility=hidden
         -fpie
         -ffunction-sections
         -fdata-sections
         -fstack-protector-strong
-        )
-set(ENCLAVE_SRC
-        enclave/enclave.cpp
-        enclave/enclave_t.c
-        )
-add_library(enclave SHARED ${ENCLAVE_SRC})
-set_target_properties(enclave PROPERTIES PREFIX "")
-target_include_directories(enclave PRIVATE
-        ${SGX_SDK_PATH}/include
-        ${SGX_SDK_PATH}/include/tlibc
-        ${SGX_SDK_PATH}/include/libcxx
-        )
-target_link_directories(enclave PRIVATE ${SGX_SDK_LIB_PATH})
-target_compile_options(enclave PRIVATE
-        ${enclave_C_FLAGS}
         -std=c++11
         -nostdinc++
         )
 target_link_options(enclave PRIVATE
-		${SGX_C_GLOBAL_FLAGS}
 		-Wl,--no-undefined -nostdlib -nodefaultlibs -nostartfiles
 		-Bstatic -Bsymbolic
 		-Wl,-pie,-eenclave_entry
@@ -71,10 +65,9 @@ target_link_libraries(enclave
 
 add_custom_command(
 	DEPENDS enclave/enclave.edl
-	PRE_BUILD COMMAND ${SGX_SDK_ENCLAVE_EDGER8R}
+	PRE_BUILD COMMAND ${SGX_EDGER8R}
 	--trusted --untrusted enclave/enclave.edl
-	--search-path ${FAASM_SOURCE_DIR}/sgx
-	--search-path ${SGX_SDK_PATH}/include
+	--search-path ${SGX_INCLUDE_DIR}
 	--trusted-dir enclave --untrusted-dir enclave
 	OUTPUT ${CMAKE_CURRENT_SOURCE_DIR}/enclave/enclave_t.h
 		   ${CMAKE_CURRENT_SOURCE_DIR}/enclave/enclave_t.c
@@ -84,7 +77,7 @@ add_custom_command(
 
 add_custom_command(TARGET enclave POST_BUILD 
         COMMAND openssl genrsa -out enclave/enclave.pem -3 3072
-		COMMAND ${SGX_SDK_ENCLAVE_SIGNER} sign
+		COMMAND ${SGX_ENCLAVE_SIGNER} sign
         -key ${CMAKE_CURRENT_SOURCE_DIR}/enclave/enclave.pem
 		-enclave ./enclave.so
 		-out ${CMAKE_BINARY_DIR}/enclave.sign.so
@@ -96,5 +89,5 @@ add_custom_command(TARGET enclave POST_BUILD
 add_executable(run test.cpp enclave/enclave_u.c)
 add_dependencies(run enclave)
 target_include_directories(run PUBLIC enclave/)
-target_link_directories(run PRIVATE ${SGX_SDK_LIB_PATH})
-target_link_libraries(run ${GTEST_LIBRARIES} ${CURL_LIBRARIES} pthread sgx_urts_sim sgx_uae_service_sim sgx_ukey_exchange)
+target_link_directories(run PRIVATE ${SGX_LIBRARY_PATH})
+target_link_libraries(run ${GTEST_LIBRARIES} ${CURL_LIBRARIES} sgx_urts_sim sgx_uae_service_sim sgx_ukey_exchange)
